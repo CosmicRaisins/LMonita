@@ -149,13 +149,37 @@ class AppState:
     generation_status: str = ""
     queued_requests: int = 0
     model_history: Dict[str, deque] = field(default_factory=dict)
-    last_gen: Optional[GenRecord] = None
-    last_gen_model: str = ""
-    total_gens: int = 0
-    total_tokens: int = 0
+    # Per-model totals: model_id -> {"gens": int, "tokens": int}
+    model_totals: Dict[str, Dict] = field(default_factory=dict)
     log_stream_active: bool = False
     api_latency_ms: float = 0.0
     dirty: bool = False
+
+    def get_model_id(self) -> str:
+        """Get the current model's identifier for history lookup."""
+        return self.primary_model.id if self.primary_model else ""
+
+    def last_gen_for(self, mid: str) -> Optional[GenRecord]:
+        """Get the most recent generation for a specific model."""
+        hist = self.model_history.get(mid)
+        return hist[-1] if hist else None
+
+    def totals_for(self, mid: str) -> tuple:
+        """Return (gens, tokens) for a model."""
+        t = self.model_totals.get(mid, {})
+        return t.get("gens", 0), t.get("tokens", 0)
+
+    def tps_data_for(self, mid: str) -> list:
+        """Return list of TPS values for a model's history."""
+        return [r.tps for r in self.model_history.get(mid, []) if r.tps > 0]
+
+    @property
+    def all_gens(self) -> int:
+        return sum(t.get("gens", 0) for t in self.model_totals.values())
+
+    @property
+    def all_tokens(self) -> int:
+        return sum(t.get("tokens", 0) for t in self.model_totals.values())
 
 
 state = AppState()
@@ -165,12 +189,14 @@ _lms_path: Optional[str] = None
 # ── Persistence ───────────────────────────────────────────────────────────────
 
 def save_history():
-    if not state.model_history:
+    if not state.model_history and not state.model_totals:
         return
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
-        out = {mid: [r.to_dict() for r in recs] for mid, recs in state.model_history.items()}
-        out["__meta__"] = {"total_gens": state.total_gens, "total_tokens": state.total_tokens, "saved_at": time.time()}
+        out = {}
+        for mid, recs in state.model_history.items():
+            out[mid] = {"records": [r.to_dict() for r in recs], "totals": state.model_totals.get(mid, {"gens": 0, "tokens": 0})}
+        out["__meta__"] = {"version": 2, "saved_at": time.time()}
         tmp = HISTORY_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(out, f)
@@ -189,23 +215,40 @@ def load_history():
         if not isinstance(data, dict):
             return
         meta = data.pop("__meta__", {})
-        state.total_gens = int(meta.get("total_gens", 0))
-        state.total_tokens = int(meta.get("total_tokens", 0))
-        for mid, recs in data.items():
-            if not isinstance(recs, list):
-                continue
-            dq = deque(maxlen=MAX_HISTORY)
-            for rd in recs:
-                if isinstance(rd, dict):
-                    dq.append(GenRecord.from_dict(rd))
-            if dq:
-                state.model_history[mid] = dq
-        latest, latest_mid = None, ""
-        for mid, dq in state.model_history.items():
-            if dq and (latest is None or dq[-1].timestamp > latest.timestamp):
-                latest, latest_mid = dq[-1], mid
-        if latest:
-            state.last_gen, state.last_gen_model = latest, latest_mid
+        version = meta.get("version", 1)
+
+        if version >= 2:
+            # v2: per-model records + totals
+            for mid, mdata in data.items():
+                if not isinstance(mdata, dict):
+                    continue
+                recs = mdata.get("records", [])
+                totals = mdata.get("totals", {"gens": 0, "tokens": 0})
+                dq = deque(maxlen=MAX_HISTORY)
+                for rd in recs:
+                    if isinstance(rd, dict):
+                        dq.append(GenRecord.from_dict(rd))
+                if dq:
+                    state.model_history[mid] = dq
+                state.model_totals[mid] = {"gens": int(totals.get("gens", 0)), "tokens": int(totals.get("tokens", 0))}
+        else:
+            # v1 legacy: flat list per model, global totals
+            global_gens = int(meta.get("total_gens", 0))
+            for mid, recs in data.items():
+                if not isinstance(recs, list):
+                    continue
+                dq = deque(maxlen=MAX_HISTORY)
+                model_tokens = 0
+                for rd in recs:
+                    if isinstance(rd, dict):
+                        rec = GenRecord.from_dict(rd)
+                        dq.append(rec)
+                        model_tokens += rec.total_tokens
+                if dq:
+                    state.model_history[mid] = dq
+                    state.model_totals[mid] = {"gens": len(dq), "tokens": model_tokens}
+
+        dbg(f"Loaded: {len(state.model_history)} models, {state.all_gens} total gens")
     except Exception as e:
         dbg(f"Load failed: {e}")
 
@@ -386,9 +429,11 @@ def process_block(block, model_id):
     if model_id not in state.model_history:
         state.model_history[model_id] = deque(maxlen=MAX_HISTORY)
     state.model_history[model_id].append(rec)
-    state.last_gen, state.last_gen_model = rec, model_id
-    state.total_gens += 1
-    state.total_tokens += rec.total_tokens
+    # Per-model totals
+    if model_id not in state.model_totals:
+        state.model_totals[model_id] = {"gens": 0, "tokens": 0}
+    state.model_totals[model_id]["gens"] += 1
+    state.model_totals[model_id]["tokens"] += rec.total_tokens
     state.dirty = True
 
 
@@ -407,11 +452,6 @@ def fmt_dur(sec):
     if m < 60: return f"{m}m {s}s"
     h, m = divmod(m, 60)
     return f"{h}h {m}m"
-
-def get_tps_data():
-    m = state.primary_model
-    mid = state.last_gen_model or (m.id if m else "")
-    return [r.tps for r in state.model_history.get(mid, []) if r.tps > 0]
 
 
 # ── GUI ───────────────────────────────────────────────────────────────────────
@@ -654,8 +694,13 @@ class App(tk.Tk):
         self.after(300, self._tick)
 
     def _uc(self):
-        """Update compact view."""
-        s = state; m = s.primary_model; g = s.last_gen; td = get_tps_data()
+        """Update compact view — shows current model's stats."""
+        s = state; m = s.primary_model
+        mid = s.get_model_id()
+        g = s.last_gen_for(mid)
+        td = s.tps_data_for(mid)
+        mg, mt = s.totals_for(mid)
+
         self.cb.config(fg=C.RED if not s.connected else (C.AMBER if s.server_status=="generating" else C.GREEN))
         self.cmod.config(text=(m.name[:22]+"…" if m and len(m.name)>24 else m.name) if m else "No model", fg=C.TEXT if m else C.TEXT_DIM)
         self.cup.config(text=fmt_dur(time.time()-s.connected_since) if s.connected and s.connected_since else "")
@@ -666,14 +711,19 @@ class App(tk.Tk):
         else:
             self.ctps.config(text="—", fg=C.TEXT_DIM); self.cst.config(text="waiting…")
         self._dspk(self.cspk, td, dots=False)
-        p = [f"{s.total_gens} gens"]
-        if s.total_tokens: p.append(f"{s.total_tokens:,} tok")
+        p = [f"{mg} gens"]
+        if mt: p.append(f"{mt:,} tok")
         if td: p.append(f"avg {sum(td)/len(td):.1f} t/s")
         self.cses.config(text="  ·  ".join(p))
 
     def _uf(self):
-        """Update full view."""
-        s = state; m = s.primary_model; g = s.last_gen; td = get_tps_data()
+        """Update full view — shows current model's stats."""
+        s = state; m = s.primary_model
+        mid = s.get_model_id()
+        g = s.last_gen_for(mid)
+        td = s.tps_data_for(mid)
+        mg, mt = s.totals_for(mid)
+
         # Badge
         if not s.connected: self.badge.config(text="OFFLINE", fg=C.RED, bg=C.RED_BG)
         elif s.server_status=="generating": self.badge.config(text="GENERATING", fg=C.AMBER, bg=C.AMBER_BG)
@@ -689,28 +739,26 @@ class App(tk.Tk):
             self.mm.config(text="  ·  ".join(p for p in [m.arch, m.quant, m.fmt.upper() if m.fmt else "", f"{m.ctx:,} ctx" if m.ctx else ""] if p))
         else:
             self.mn.config(text="No model loaded", fg=C.TEXT_DIM); self.mm.config(text="")
-        # Last gen
+        # Last gen for THIS model
         if g:
             self.ftps.config(text=f"{g.tps:.1f}", fg=C.CYAN)
             ttft = g.ttft_sec*1000 if g.ttft_sec < 10 else g.ttft_sec
             self.fttft.config(text=f"{ttft:.0f}ms"); self.ftime.config(text=f"{g.total_sec:.1f}s")
             self.ftok.config(text=f"{g.total_tokens:,}"); self.fprom.config(text=f"{g.prompt_tokens:,}")
             self.fgen.config(text=f"{g.predicted_tokens:,}"); self.fstp.config(text=g.stop_reason or "—")
-            if s.last_gen_model:
-                sn = s.last_gen_model.split("/")[-1]
-                self.fmod.config(text=sn[:20]+"…" if len(sn)>22 else sn)
+            self.fmod.config(text="")
         else:
             self.ftps.config(text="—", fg=C.TEXT_DIM)
             for l in [self.fttft,self.ftime,self.ftok,self.fprom,self.fgen,self.fstp]: l.config(text="—")
-            self.fmod.config(text="")
-        # History
+            self.fmod.config(text="no history" if m else "")
+        # History for THIS model
         if td:
             self.hi.config(text=f"{len(td)} generations")
             self.hs.config(text=f"avg {sum(td)/len(td):.1f}  peak {max(td):.1f}")
-        else: self.hi.config(text="No data yet"); self.hs.config(text="")
+        else: self.hi.config(text="No data for this model"); self.hs.config(text="")
         self._dspk(self.spk, td, dots=True)
-        # Session
-        self.sg.config(text=str(s.total_gens)); self.st.config(text=f"{s.total_tokens:,}")
+        # Session for THIS model
+        self.sg.config(text=str(mg)); self.st.config(text=f"{mt:,}")
         self.sq.config(text=str(s.queued_requests), fg=C.AMBER if s.queued_requests>0 else C.TEXT)
 
 
@@ -721,5 +769,5 @@ if __name__ == "__main__":
     if args: BASE_URL = args[0].rstrip("/")
     find_lms(); load_history(); atexit.register(save_history)
     if DEBUG:
-        print(f"URL: {BASE_URL}\nlms: {_lms_path or 'NOT FOUND'}\nDPI: {DPI_SCALE:.2f}x ({int(DPI_SCALE*96)} dpi)\nHistory: {len(state.model_history)} models, {state.total_gens} gens")
+        print(f"URL: {BASE_URL}\nlms: {_lms_path or 'NOT FOUND'}\nDPI: {DPI_SCALE:.2f}x ({int(DPI_SCALE*96)} dpi)\nHistory: {len(state.model_history)} models, {state.all_gens} total gens")
     app = App(); app.mainloop()
