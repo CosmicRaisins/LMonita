@@ -5,10 +5,10 @@ A passive floating desktop widget that monitors LM Studio in real-time, displayi
 ## Screenshots
 
 ### Expanded View
-![Expanded View](Images/Screenshot1.png)
+![Expanded View](Images/Screenshot2.png)
 
 ### Compact/Collapsed View
-![Compact View](Images/Screenshot2.png)
+![Compact View](Images/Screenshot1.png)
 
 ## Features
 
