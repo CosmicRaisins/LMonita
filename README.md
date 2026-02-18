@@ -92,6 +92,31 @@ python test_collapse.py  # Additional collapse tests
 - LM Studio installed and running
 - `requests` library (install with `pip install requests`)
 
+## Roadmap
+
+### Planned Features
+
+#### Themes
+- Dark mode support
+- Customizable color schemes
+- High contrast mode for accessibility
+
+#### UI Customization
+- Adjustable font sizes
+- Font family selection (monospace, sans-serif)
+- Window transparency controls
+
+#### Panel Management
+- Togglable panels (show/hide specific sections)
+- Reorderable panels
+- Collapsible sections with customizable defaults
+
+#### Additional Features
+- Notification system for generation completion
+- Export history to CSV/JSON
+- Multi-monitor support
+- Custom API endpoints configuration
+
 ## License
 
 This project is open source. See LICENSE for details.
