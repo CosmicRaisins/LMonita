@@ -2,6 +2,14 @@
 
 A passive floating desktop widget that monitors LM Studio in real-time, displaying per-generation statistics and TPS history.
 
+## Screenshots
+
+### Expanded View
+![Expanded View](Images/Screenshot1.png)
+
+### Compact/Collapsed View
+![Compact View](Images/Screenshot2.png)
+
 ## Features
 
 ### Real-Time Monitoring
