@@ -84,6 +84,47 @@ def dbg(msg):
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
 
+THEMES = {
+    "light": {
+        "TKEY": "#f0f1f0", "BG": "#f5f5f9", "SURFACE": "#ffffff",
+        "BORDER": "#d6d6de", "TEXT": "#1a1a2e", "TEXT_DIM": "#8888a0",
+        "ACCENT": "#6c5ce7", "GREEN": "#16a34a", "GREEN_BG": "#dcfce7",
+        "RED": "#dc2626", "RED_BG": "#fee2e2", "AMBER": "#d97706",
+        "AMBER_BG": "#fef3c7", "CYAN": "#0e7490", "SPARK_FILL": "#cffafe",
+        "SPARK_LINE": "#0e7490", "SPARK_DOT": "#0e7490"
+    },
+    "dark": {
+        "TKEY": "#1e1e1e", "BG": "#2b2b2b", "SURFACE": "#3c3f41",
+        "BORDER": "#555555", "TEXT": "#d4d4d4", "TEXT_DIM": "#999999",
+        "ACCENT": "#cc7832", "GREEN": "#499c54", "GREEN_BG": "#2d3a2a",
+        "RED": "#e06c6c", "RED_BG": "#4a2323", "AMBER": "#e8bf6a",
+        "AMBER_BG": "#3d3220", "CYAN": "#7ab0d4", "SPARK_FILL": "#2e4057",
+        "SPARK_LINE": "#7ab0d4", "SPARK_DOT": "#7ab0d4"
+    }
+}
+
+class ThemeManager:
+    def __init__(self):
+        self.current_theme = "light"
+        self.themes = THEMES
+
+    def set_theme(self, theme_name):
+        """Switch to a different theme"""
+        if theme_name in self.themes:
+            self.current_theme = theme_name
+            return True
+        return False
+
+    def get_colors(self):
+        """Get current color scheme"""
+        return self.themes[self.current_theme]
+
+    def cycle_theme(self):
+        """Cycle through available themes"""
+        themes_list = list(self.themes.keys())
+        idx = (themes_list.index(self.current_theme) + 1) % len(themes_list)
+        self.current_theme = themes_list[idx]
+
 class C:
     TKEY       = "#f0f1f0"
     BG         = "#f5f5f9"
@@ -154,6 +195,7 @@ class AppState:
     log_stream_active: bool = False
     api_latency_ms: float = 0.0
     dirty: bool = False
+    theme_manager: ThemeManager = field(default_factory=ThemeManager)
 
     def get_model_id(self) -> str:
         """Get the current model's identifier for history lookup."""
@@ -251,6 +293,37 @@ def load_history():
         dbg(f"Loaded: {len(state.model_history)} models, {state.all_gens} total gens")
     except Exception as e:
         dbg(f"Load failed: {e}")
+
+
+def save_settings():
+    """Save user preferences including theme"""
+    settings = {
+        "theme": state.theme_manager.current_theme,
+        "version": 1
+    }
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(os.path.join(DATA_DIR, "settings.json"), "w", encoding="utf-8") as f:
+            json.dump(settings, f)
+    except Exception as e:
+        dbg(f"Settings save failed: {e}")
+
+
+def load_settings():
+    """Load user preferences including theme"""
+    settings_file = os.path.join(DATA_DIR, "settings.json")
+    if not os.path.exists(settings_file):
+        return
+
+    try:
+        with open(settings_file, "r", encoding="utf-8") as f:
+            settings = json.load(f)
+        if isinstance(settings, dict) and "theme" in settings:
+            theme_name = settings["theme"]
+            if state.theme_manager.set_theme(theme_name):
+                dbg(f"Loaded theme: {theme_name}")
+    except Exception as e:
+        dbg(f"Settings load failed: {e}")
 
 
 def periodic_save():
@@ -462,9 +535,11 @@ class App(tk.Tk):
         self.title("LM Studio Monitor")
         self.overrideredirect(True)
         self.attributes("-topmost", True)
-        self.configure(bg=C.TKEY)
+        # Use theme colors
+        colors = state.theme_manager.get_colors()
+        self.configure(bg=colors["TKEY"])
         if sys.platform == "win32":
-            try: self.attributes("-transparentcolor", C.TKEY)
+            try: self.attributes("-transparentcolor", colors["TKEY"])
             except: pass
 
         self._col = False
@@ -503,9 +578,11 @@ class App(tk.Tk):
 
     def _drawbg(self):
         c = self._cv; c.delete("bg")
+        colors = state.theme_manager.get_colors()
         w, h, r = W_W, self._h, CORNER_R
-        self._rr(c, S(3),S(3), w-1,h-1, r, fill="#d0d0d8", outline="", tags="bg")
-        self._rr(c, 0,0, w-S(4),h-S(4), r, fill=C.BG, outline=C.BORDER, tags="bg")
+        shadow = "#18181e" if state.theme_manager.current_theme == "dark" else "#c4c4cc"
+        self._rr(c, S(3),S(3), w-1,h-1, r, fill=shadow, outline="", tags="bg")
+        self._rr(c, 0,0, w-S(4),h-S(4), r, fill=colors["BG"], outline=colors["BORDER"], tags="bg")
 
     def _rr(self, cv, x1,y1,x2,y2, r, **kw):
         cv.create_polygon(x1+r,y1, x2-r,y1, x2,y1, x2,y1+r, x2,y2-r, x2,y2,
@@ -514,107 +591,115 @@ class App(tk.Tk):
     # ── Build ──
 
     def _build(self):
-        self._cv = tk.Canvas(self, width=W_W, height=W_H_FULL, bg=C.TKEY, highlightthickness=0, bd=0)
+        colors = state.theme_manager.get_colors()
+        self._cv = tk.Canvas(self, width=W_W, height=W_H_FULL, bg=colors["TKEY"], highlightthickness=0, bd=0)
         self._cv.place(x=0, y=0, relwidth=1, relheight=1)
         self._drawbg()
-        self._ct = tk.Frame(self, bg=C.BG)
+        self._ct = tk.Frame(self, bg=colors["BG"])
         self._ct.place(x=S(6), y=S(6), width=W_W-S(12), height=W_H_FULL-S(12))
         r = self._ct
 
         # ── Titlebar ──
-        tb = tk.Frame(r, bg=C.BG, height=S(28)); tb.pack(fill="x", padx=S(8), pady=(S(6),0)); tb.pack_propagate(False)
+        tb = tk.Frame(r, bg=colors["BG"], height=S(28)); tb.pack(fill="x", padx=S(8), pady=(S(6),0)); tb.pack_propagate(False)
         self._drag(tb)
-        self.dot = tk.Canvas(tb, width=S(10), height=S(10), bg=C.BG, highlightthickness=0)
+        self.dot = tk.Canvas(tb, width=S(10), height=S(10), bg=colors["BG"], highlightthickness=0)
         self.dot.pack(side="left", padx=(0,S(6))); self._drag(self.dot)
-        l = tk.Label(tb, text="LM STUDIO", font=self.F["tt"], fg=C.TEXT_DIM, bg=C.BG); l.pack(side="left"); self._drag(l)
-        xb = tk.Label(tb, text="✕", font=self.F["ss"], fg=C.TEXT_DIM, bg=C.BG, cursor="hand2"); xb.pack(side="right")
+        l = tk.Label(tb, text="LM STUDIO", font=self.F["tt"], fg=colors["TEXT_DIM"], bg=colors["BG"]); l.pack(side="left"); self._drag(l)
+        xb = tk.Label(tb, text="✕", font=self.F["ss"], fg=colors["TEXT_DIM"], bg=colors["BG"], cursor="hand2"); xb.pack(side="right")
         xb.bind("<Button-1>", lambda e: self._close())
-        xb.bind("<Enter>", lambda e: xb.config(fg=C.RED)); xb.bind("<Leave>", lambda e: xb.config(fg=C.TEXT_DIM))
-        self.pinb = tk.Label(tb, text="📌", font=self.F["ss"], fg=C.ACCENT, bg=C.BG, cursor="hand2")
+        xb.bind("<Enter>", lambda e: xb.config(fg=colors["RED"])); xb.bind("<Leave>", lambda e: xb.config(fg=colors["TEXT_DIM"]))
+        self.pinb = tk.Label(tb, text="📌", font=self.F["ss"], fg=colors["ACCENT"], bg=colors["BG"], cursor="hand2")
         self.pinb.pack(side="right", padx=(0,S(6))); self.pinb.bind("<Button-1>", self._tpin)
-        self.colb = tk.Label(tb, text="▾", font=self.F["tt"], fg=C.TEXT_DIM, bg=C.BG, cursor="hand2")
+        self.themeb = tk.Label(tb, text="🎨", font=self.F["ss"], fg=colors["ACCENT"], bg=colors["BG"], cursor="hand2")
+        self.themeb.pack(side="right", padx=(0,S(6))); self.themeb.bind("<Button-1>", self._ttheme)
+        self.colb = tk.Label(tb, text="▾", font=self.F["tt"], fg=colors["TEXT_DIM"], bg=colors["BG"], cursor="hand2")
         self.colb.pack(side="right", padx=(0,S(6))); self.colb.bind("<Button-1>", self._tcol)
 
         # ── Compact view ──
-        self._cf = tk.Frame(r, bg=C.BG)
+        self._cf = tk.Frame(r, bg=colors["BG"])
         self._cf.pack(fill="both", expand=True)
-        r1 = tk.Frame(self._cf, bg=C.BG); r1.pack(fill="x", padx=S(10), pady=(S(6),0))
-        self.cb = tk.Label(r1, text="●", font=self.F["cl"], fg=C.GREEN, bg=C.BG); self.cb.pack(side="left", padx=(0,S(4)))
-        self.cmod = tk.Label(r1, text="—", font=self.F["cm"], fg=C.TEXT, bg=C.BG, anchor="w"); self.cmod.pack(side="left", fill="x", expand=True)
-        self.cup = tk.Label(r1, text="", font=self.F["cl"], fg=C.TEXT_DIM, bg=C.BG); self.cup.pack(side="right")
-        r2 = tk.Frame(self._cf, bg=C.SURFACE, highlightbackground=C.BORDER, highlightthickness=1)
+        r1 = tk.Frame(self._cf, bg=colors["BG"]); r1.pack(fill="x", padx=S(10), pady=(S(6),0))
+        self.cb = tk.Label(r1, text="●", font=self.F["cl"], fg=colors["GREEN"], bg=colors["BG"]); self.cb.pack(side="left", padx=(0,S(4)))
+        self.cmod = tk.Label(r1, text="—", font=self.F["cm"], fg=colors["TEXT"], bg=colors["BG"], anchor="w"); self.cmod.pack(side="left", fill="x", expand=True)
+        self.cup = tk.Label(r1, text="", font=self.F["cl"], fg=colors["TEXT_DIM"], bg=colors["BG"]); self.cup.pack(side="right")
+        r2 = tk.Frame(self._cf, bg=colors["SURFACE"], highlightbackground=colors["BORDER"], highlightthickness=1)
         r2.pack(fill="x", padx=S(10), pady=(S(6),0))
-        lf = tk.Frame(r2, bg=C.SURFACE); lf.pack(side="left", padx=(S(10),0), pady=S(6))
-        self.ctps = tk.Label(lf, text="—", font=self.F["ct"], fg=C.CYAN, bg=C.SURFACE, anchor="w"); self.ctps.pack(anchor="w")
-        self.cst = tk.Label(lf, text="", font=self.F["cl"], fg=C.TEXT_DIM, bg=C.SURFACE); self.cst.pack(anchor="w")
-        self.cspk = tk.Canvas(r2, width=S(100), height=S(36), bg=C.SURFACE, highlightthickness=0)
+        lf = tk.Frame(r2, bg=colors["SURFACE"]); lf.pack(side="left", padx=(S(10),0), pady=S(6))
+        self.ctps = tk.Label(lf, text="—", font=self.F["ct"], fg=colors["CYAN"], bg=colors["SURFACE"], anchor="w"); self.ctps.pack(anchor="w")
+        self.cst = tk.Label(lf, text="", font=self.F["cl"], fg=colors["TEXT_DIM"], bg=colors["SURFACE"]); self.cst.pack(anchor="w")
+        self.cspk = tk.Canvas(r2, width=S(100), height=S(36), bg=colors["SURFACE"], highlightthickness=0)
         self.cspk.pack(side="right", padx=(S(4),S(8)), pady=S(6))
-        r3 = tk.Frame(self._cf, bg=C.BG); r3.pack(fill="x", padx=S(10), pady=(S(6),0))
-        self.cses = tk.Label(r3, text="", font=self.F["cl"], fg=C.TEXT_DIM, bg=C.BG, anchor="w"); self.cses.pack(fill="x")
+        r3 = tk.Frame(self._cf, bg=colors["BG"]); r3.pack(fill="x", padx=S(10), pady=(S(6),0))
+        self.cses = tk.Label(r3, text="", font=self.F["cl"], fg=colors["TEXT_DIM"], bg=colors["BG"], anchor="w"); self.cses.pack(fill="x")
 
         # ── Full view ──
-        self._ff = tk.Frame(r, bg=C.BG)
+        self._ff = tk.Frame(r, bg=colors["BG"])
         self._ff.pack(fill="both", expand=True)
         d = self._ff
 
-        sr = tk.Frame(d, bg=C.BG); sr.pack(fill="x", padx=S(10), pady=(S(6),0))
-        self.badge = tk.Label(sr, text="OFFLINE", font=self.F["ms"], fg=C.RED, bg=C.RED_BG, padx=S(6), pady=S(1)); self.badge.pack(side="left")
-        self.uptime = tk.Label(sr, text="--:--:--", font=self.F["ms"], fg=C.TEXT_DIM, bg=C.BG); self.uptime.pack(side="right")
+        sr = tk.Frame(d, bg=colors["BG"]); sr.pack(fill="x", padx=S(10), pady=(S(6),0))
+        self.badge = tk.Label(sr, text="OFFLINE", font=self.F["ms"], fg=colors["RED"], bg=colors["RED_BG"], padx=S(6), pady=S(1)); self.badge.pack(side="left")
+        self.uptime = tk.Label(sr, text="--:--:--", font=self.F["ms"], fg=colors["TEXT_DIM"], bg=colors["BG"]); self.uptime.pack(side="right")
 
-        mc = tk.Frame(d, bg=C.SURFACE, highlightbackground=C.BORDER, highlightthickness=1)
+        mc = tk.Frame(d, bg=colors["SURFACE"], highlightbackground=colors["BORDER"], highlightthickness=1)
         mc.pack(fill="x", padx=S(10), pady=(S(8),0))
-        tk.Frame(mc, bg=C.ACCENT, width=S(3)).pack(side="left", fill="y")
-        mi = tk.Frame(mc, bg=C.SURFACE); mi.pack(fill="both", expand=True, padx=S(8), pady=S(6))
-        self.mn = tk.Label(mi, text="No model loaded", font=self.F["md"], fg=C.TEXT_DIM, bg=C.SURFACE, anchor="w"); self.mn.pack(fill="x")
-        self.mm = tk.Label(mi, text="", font=self.F["ms"], fg=C.TEXT_DIM, bg=C.SURFACE, anchor="w"); self.mm.pack(fill="x", pady=(S(1),0))
+        tk.Frame(mc, bg=colors["ACCENT"], width=S(3)).pack(side="left", fill="y")
+        mi = tk.Frame(mc, bg=colors["SURFACE"]); mi.pack(fill="both", expand=True, padx=S(8), pady=S(6))
+        self.mn = tk.Label(mi, text="No model loaded", font=self.F["md"], fg=colors["TEXT_DIM"], bg=colors["SURFACE"], anchor="w"); self.mn.pack(fill="x")
+        self.mm = tk.Label(mi, text="", font=self.F["ms"], fg=colors["TEXT_DIM"], bg=colors["SURFACE"], anchor="w"); self.mm.pack(fill="x", pady=(S(1),0))
 
-        self._sl(d, "LAST GENERATION")
-        lg = tk.Frame(d, bg=C.SURFACE, highlightbackground=C.BORDER, highlightthickness=1); lg.pack(fill="x", padx=S(10), pady=(S(4),0))
-        tr = tk.Frame(lg, bg=C.SURFACE); tr.pack(fill="x", padx=S(10), pady=(S(8),0))
-        self.ftps = tk.Label(tr, text="—", font=self.F["ml"], fg=C.CYAN, bg=C.SURFACE, anchor="w"); self.ftps.pack(side="left")
-        tk.Label(tr, text="t/s", font=self.F["ms"], fg=C.TEXT_DIM, bg=C.SURFACE, anchor="sw").pack(side="left", padx=(S(4),0), pady=(0,S(6)))
-        self.fmod = tk.Label(tr, text="", font=self.F["ms"], fg=C.TEXT_DIM, bg=C.SURFACE, anchor="se"); self.fmod.pack(side="right", pady=(0,S(6)))
-        sg = tk.Frame(lg, bg=C.SURFACE); sg.pack(fill="x", padx=S(10), pady=(S(4),S(8)))
+        self._sl(d, "LAST GENERATION", colors)
+        lg = tk.Frame(d, bg=colors["SURFACE"], highlightbackground=colors["BORDER"], highlightthickness=1); lg.pack(fill="x", padx=S(10), pady=(S(4),0))
+        tr = tk.Frame(lg, bg=colors["SURFACE"]); tr.pack(fill="x", padx=S(10), pady=(S(8),0))
+        self.ftps = tk.Label(tr, text="—", font=self.F["ml"], fg=colors["CYAN"], bg=colors["SURFACE"], anchor="w"); self.ftps.pack(side="left")
+        tk.Label(tr, text="t/s", font=self.F["ms"], fg=colors["TEXT_DIM"], bg=colors["SURFACE"], anchor="sw").pack(side="left", padx=(S(4),0), pady=(0,S(6)))
+        self.fmod = tk.Label(tr, text="", font=self.F["ms"], fg=colors["TEXT_DIM"], bg=colors["SURFACE"], anchor="se"); self.fmod.pack(side="right", pady=(0,S(6)))
+        sg = tk.Frame(lg, bg=colors["SURFACE"]); sg.pack(fill="x", padx=S(10), pady=(S(4),S(8)))
         sg.columnconfigure(0, weight=1); sg.columnconfigure(1, weight=1); sg.columnconfigure(2, weight=1)
-        self.fttft = self._ms(sg,0,0,"TTFT"); self.ftime = self._ms(sg,0,1,"TIME"); self.ftok = self._ms(sg,0,2,"TOKENS")
-        self.fprom = self._ms(sg,1,0,"PROMPT"); self.fgen = self._ms(sg,1,1,"GEN'D"); self.fstp = self._ms(sg,1,2,"STOP")
+        self.fttft = self._ms(sg,0,0,"TTFT",colors); self.ftime = self._ms(sg,0,1,"TIME",colors); self.ftok = self._ms(sg,0,2,"TOKENS",colors)
+        self.fprom = self._ms(sg,1,0,"PROMPT",colors); self.fgen = self._ms(sg,1,1,"GEN'D",colors); self.fstp = self._ms(sg,1,2,"STOP",colors)
 
-        self._sl(d, "TPS HISTORY")
-        hf = tk.Frame(d, bg=C.SURFACE, highlightbackground=C.BORDER, highlightthickness=1); hf.pack(fill="x", padx=S(10), pady=(S(4),0))
-        hh = tk.Frame(hf, bg=C.SURFACE); hh.pack(fill="x", padx=S(10), pady=(S(6),0))
-        self.hi = tk.Label(hh, text="No data yet", font=self.F["ms"], fg=C.TEXT_DIM, bg=C.SURFACE, anchor="w"); self.hi.pack(side="left")
-        self.hs = tk.Label(hh, text="", font=self.F["ms"], fg=C.CYAN, bg=C.SURFACE, anchor="e"); self.hs.pack(side="right")
-        self.spk = tk.Canvas(hf, height=S(55), bg=C.SURFACE, highlightthickness=0); self.spk.pack(fill="x", padx=S(10), pady=(S(2),S(8)))
+        self._sl(d, "TPS HISTORY", colors)
+        hf = tk.Frame(d, bg=colors["SURFACE"], highlightbackground=colors["BORDER"], highlightthickness=1); hf.pack(fill="x", padx=S(10), pady=(S(4),0))
+        hh = tk.Frame(hf, bg=colors["SURFACE"]); hh.pack(fill="x", padx=S(10), pady=(S(6),0))
+        self.hi = tk.Label(hh, text="No data yet", font=self.F["ms"], fg=colors["TEXT_DIM"], bg=colors["SURFACE"], anchor="w"); self.hi.pack(side="left")
+        self.hs = tk.Label(hh, text="", font=self.F["ms"], fg=colors["CYAN"], bg=colors["SURFACE"], anchor="e"); self.hs.pack(side="right")
+        self.spk = tk.Canvas(hf, height=S(55), bg=colors["SURFACE"], highlightthickness=0); self.spk.pack(fill="x", padx=S(10), pady=(S(2),S(8)))
 
-        self._sl(d, "SESSION")
-        sf = tk.Frame(d, bg=C.BG); sf.pack(fill="x", padx=S(10), pady=(S(4),0))
+        self._sl(d, "SESSION", colors)
+        sf = tk.Frame(d, bg=colors["BG"]); sf.pack(fill="x", padx=S(10), pady=(S(4),0))
         sf.columnconfigure(0,weight=1); sf.columnconfigure(1,weight=1); sf.columnconfigure(2,weight=1)
-        self.sg = self._cd(sf,0,"GENS","0",C.ACCENT); self.st = self._cd(sf,1,"TOKENS","0",C.CYAN); self.sq = self._cd(sf,2,"QUEUE","0",C.TEXT)
+        self.sg = self._cd(sf,0,"GENS","0",colors["ACCENT"],colors); self.st = self._cd(sf,1,"TOKENS","0",colors["CYAN"],colors); self.sq = self._cd(sf,2,"QUEUE","0",colors["TEXT"],colors)
 
         # Footer
-        ft = tk.Frame(r, bg=C.BG); ft.pack(fill="x", side="bottom", padx=S(10), pady=(S(4),S(6)))
-        self.fu = tk.Label(ft, text=BASE_URL, font=self.F["ms"], fg=C.TEXT_DIM, bg=C.BG); self.fu.pack(side="left")
-        self.fs = tk.Label(ft, text="", font=self.F["ms"], fg=C.TEXT_DIM, bg=C.BG); self.fs.pack(side="right")
+        ft = tk.Frame(r, bg=colors["BG"]); ft.pack(fill="x", side="bottom", padx=S(10), pady=(S(4),S(6)))
+        self.fu = tk.Label(ft, text=BASE_URL, font=self.F["ms"], fg=colors["TEXT_DIM"], bg=colors["BG"]); self.fu.pack(side="left")
+        self.fs = tk.Label(ft, text="", font=self.F["ms"], fg=colors["TEXT_DIM"], bg=colors["BG"]); self.fs.pack(side="right")
 
         # Start expanded
         self._cf.pack_forget()
+        # Store colors used during build for theme remapping
+        self._last_colors = colors
 
-    def _sl(self, p, t):
-        f = tk.Frame(p, bg=C.BG); f.pack(fill="x", padx=S(10), pady=(S(8),0))
-        tk.Label(f, text=t, font=self.F["sc"], fg=C.TEXT_DIM, bg=C.BG).pack(side="left")
+    def _sl(self, p, t, colors=None):
+        if colors is None: colors = state.theme_manager.get_colors()
+        f = tk.Frame(p, bg=colors["BG"]); f.pack(fill="x", padx=S(10), pady=(S(8),0))
+        tk.Label(f, text=t, font=self.F["sc"], fg=colors["TEXT_DIM"], bg=colors["BG"]).pack(side="left")
 
-    def _ms(self, p, r, c, lb):
-        f = tk.Frame(p, bg=C.SURFACE); f.grid(row=r, column=c, sticky="w", padx=(0,S(8)), pady=S(2))
-        tk.Label(f, text=lb, font=self.F["ms"], fg=C.TEXT_DIM, bg=C.SURFACE).pack(anchor="w")
-        v = tk.Label(f, text="—", font=self.F["mv"], fg=C.TEXT, bg=C.SURFACE, anchor="w"); v.pack(anchor="w")
+    def _ms(self, p, r, c, lb, colors=None):
+        if colors is None: colors = state.theme_manager.get_colors()
+        f = tk.Frame(p, bg=colors["SURFACE"]); f.grid(row=r, column=c, sticky="w", padx=(0,S(8)), pady=S(2))
+        tk.Label(f, text=lb, font=self.F["ms"], fg=colors["TEXT_DIM"], bg=colors["SURFACE"]).pack(anchor="w")
+        v = tk.Label(f, text="—", font=self.F["mv"], fg=colors["TEXT"], bg=colors["SURFACE"], anchor="w"); v.pack(anchor="w")
         return v
 
-    def _cd(self, p, c, lb, iv, cl):
-        b = tk.Frame(p, bg=C.SURFACE, highlightbackground=C.BORDER, highlightthickness=1)
+    def _cd(self, p, c, lb, iv, cl, colors=None):
+        if colors is None: colors = state.theme_manager.get_colors()
+        b = tk.Frame(p, bg=colors["SURFACE"], highlightbackground=colors["BORDER"], highlightthickness=1)
         b.grid(row=0, column=c, sticky="nsew", padx=(0 if c==0 else S(3), 0))
-        i = tk.Frame(b, bg=C.SURFACE); i.pack(padx=S(8), pady=S(5))
-        tk.Label(i, text=lb, font=self.F["ms"], fg=C.TEXT_DIM, bg=C.SURFACE).pack(anchor="w")
-        v = tk.Label(i, text=iv, font=self.F["mm"], fg=cl, bg=C.SURFACE, anchor="w"); v.pack(anchor="w")
+        i = tk.Frame(b, bg=colors["SURFACE"]); i.pack(padx=S(8), pady=S(5))
+        tk.Label(i, text=lb, font=self.F["ms"], fg=colors["TEXT_DIM"], bg=colors["SURFACE"]).pack(anchor="w")
+        v = tk.Label(i, text=iv, font=self.F["mm"], fg=cl, bg=colors["SURFACE"], anchor="w"); v.pack(anchor="w")
         return v
 
     # ── Interactions ──
@@ -626,7 +711,14 @@ class App(tk.Tk):
     def _tpin(self, e=None):
         self._pin = not self._pin
         self.attributes("-topmost", self._pin)
-        self.pinb.config(fg=C.ACCENT if self._pin else C.TEXT_DIM)
+        colors = state.theme_manager.get_colors()
+        self.pinb.config(fg=colors["ACCENT"] if self._pin else colors["TEXT_DIM"])
+
+    def _ttheme(self, e=None):
+        """Toggle theme (cycle through available themes)"""
+        state.theme_manager.cycle_theme()
+        save_settings()
+        self.apply_theme()
 
     def _tcol(self, e=None):
         self._col = not self._col
@@ -644,7 +736,40 @@ class App(tk.Tk):
 
     def _close(self):
         save_history()
+        save_settings()
         self.destroy()
+
+    def apply_theme(self):
+        """Apply current theme by remapping old color values → new color values across all widgets."""
+        old = self._last_colors
+        new = state.theme_manager.get_colors()
+
+        def remap(c):
+            """Map a hex color from the old theme to its equivalent in the new theme."""
+            for key, val in old.items():
+                if c == val:
+                    return new.get(key, c)
+            return c
+
+        def update_widget(w):
+            for prop in ("bg", "fg", "highlightbackground", "activebackground", "activeforeground"):
+                try:
+                    w.config(**{prop: remap(w.cget(prop))})
+                except Exception:
+                    pass
+            for child in w.winfo_children():
+                update_widget(child)
+
+        update_widget(self)
+
+        # Update the transparency key and redraw the rounded bg
+        self._cv.config(bg=new["TKEY"])
+        if sys.platform == "win32":
+            try: self.attributes("-transparentcolor", new["TKEY"])
+            except: pass
+        self._drawbg()
+
+        self._last_colors = new
 
     def _sdot(self, c):
         self.dot.delete("all")
@@ -655,33 +780,35 @@ class App(tk.Tk):
     def _dspk(self, cv, data, dots=True):
         cv.delete("all"); cv.update_idletasks()
         w, h = cv.winfo_width(), cv.winfo_height()
+        colors = state.theme_manager.get_colors()
         if w < S(10) or h < S(10): return
         if not data:
-            cv.create_line(0,h-1,w,h-1, fill=C.BORDER); return
+            cv.create_line(0,h-1,w,h-1, fill=colors["BORDER"]); return
         if len(data) == 1:
             cx,cy = w//2, h//2
-            cv.create_oval(cx-S(3),cy-S(3),cx+S(3),cy+S(3), fill=C.SPARK_LINE, outline=""); return
+            cv.create_oval(cx-S(3),cy-S(3),cx+S(3),cy+S(3), fill=colors["SPARK_LINE"], outline=""); return
         mx = max(data)*1.1 if max(data)>0 else 1
         px,py = S(6),S(4)
         uw,uh = w-2*px, h-2*py
         step = uw/(len(data)-1)
         pts = [(px+i*step, h-py-(v/mx)*uh) for i,v in enumerate(data)]
         fp = [(pts[0][0],h-py)] + pts + [(pts[-1][0],h-py)]
-        cv.create_polygon([c for p in fp for c in p], fill=C.SPARK_FILL, outline="", smooth=True)
+        cv.create_polygon([c for p in fp for c in p], fill=colors["SPARK_FILL"], outline="", smooth=True)
         lf = [c for p in pts for c in p]
-        if len(lf)>=4: cv.create_line(lf, fill=C.SPARK_LINE, width=max(1,S(1.5)), smooth=True)
+        if len(lf)>=4: cv.create_line(lf, fill=colors["SPARK_LINE"], width=max(1,S(1.5)), smooth=True)
         if dots:
             for i,(x,y) in enumerate(pts):
                 r = S(3) if i==len(pts)-1 else S(2)
-                cv.create_oval(x-r,y-r,x+r,y+r, fill=C.SPARK_DOT, outline="")
+                cv.create_oval(x-r,y-r,x+r,y+r, fill=colors["SPARK_DOT"], outline="")
 
     # ── Tick ──
 
     def _tick(self):
         try:
             s = state
+            colors = state.theme_manager.get_colors()
             # Dot
-            self._sdot(C.RED if not s.connected else (C.AMBER if s.server_status=="generating" else C.GREEN))
+            self._sdot(colors["RED"] if not s.connected else (colors["AMBER"] if s.server_status=="generating" else colors["GREEN"]))
             if self._col: self._uc()
             else: self._uf()
             # Footer
@@ -700,16 +827,17 @@ class App(tk.Tk):
         g = s.last_gen_for(mid)
         td = s.tps_data_for(mid)
         mg, mt = s.totals_for(mid)
+        colors = state.theme_manager.get_colors()
 
-        self.cb.config(fg=C.RED if not s.connected else (C.AMBER if s.server_status=="generating" else C.GREEN))
-        self.cmod.config(text=(m.name[:22]+"…" if m and len(m.name)>24 else m.name) if m else "No model", fg=C.TEXT if m else C.TEXT_DIM)
+        self.cb.config(fg=colors["RED"] if not s.connected else (colors["AMBER"] if s.server_status=="generating" else colors["GREEN"]))
+        self.cmod.config(text=(m.name[:22]+"…" if m and len(m.name)>24 else m.name) if m else "No model", fg=colors["TEXT"] if m else colors["TEXT_DIM"])
         self.cup.config(text=fmt_dur(time.time()-s.connected_since) if s.connected and s.connected_since else "")
         if g:
-            self.ctps.config(text=f"{g.tps:.1f}", fg=C.CYAN)
+            self.ctps.config(text=f"{g.tps:.1f}", fg=colors["CYAN"])
             ttft = g.ttft_sec*1000 if g.ttft_sec < 10 else g.ttft_sec
             self.cst.config(text=f"TTFT {ttft:.0f}ms  ·  {g.total_sec:.1f}s  ·  {g.predicted_tokens} tok")
         else:
-            self.ctps.config(text="—", fg=C.TEXT_DIM); self.cst.config(text="waiting…")
+            self.ctps.config(text="—", fg=colors["TEXT_DIM"]); self.cst.config(text="waiting…")
         self._dspk(self.cspk, td, dots=False)
         p = [f"{mg} gens"]
         if mt: p.append(f"{mt:,} tok")
@@ -723,11 +851,12 @@ class App(tk.Tk):
         g = s.last_gen_for(mid)
         td = s.tps_data_for(mid)
         mg, mt = s.totals_for(mid)
+        colors = state.theme_manager.get_colors()
 
         # Badge
-        if not s.connected: self.badge.config(text="OFFLINE", fg=C.RED, bg=C.RED_BG)
-        elif s.server_status=="generating": self.badge.config(text="GENERATING", fg=C.AMBER, bg=C.AMBER_BG)
-        else: self.badge.config(text="CONNECTED", fg=C.GREEN, bg=C.GREEN_BG)
+        if not s.connected: self.badge.config(text="OFFLINE", fg=colors["RED"], bg=colors["RED_BG"])
+        elif s.server_status=="generating": self.badge.config(text="GENERATING", fg=colors["AMBER"], bg=colors["AMBER_BG"])
+        else: self.badge.config(text="CONNECTED", fg=colors["GREEN"], bg=colors["GREEN_BG"])
         # Uptime
         if s.connected and s.connected_since:
             d=int(time.time()-s.connected_since); h,rm=divmod(d,3600); mn,sc=divmod(rm,60)
@@ -735,20 +864,20 @@ class App(tk.Tk):
         else: self.uptime.config(text="--:--:--")
         # Model
         if m:
-            self.mn.config(text=(m.name[:28]+"…" if len(m.name)>30 else m.name), fg=C.TEXT)
+            self.mn.config(text=(m.name[:28]+"…" if len(m.name)>30 else m.name), fg=colors["TEXT"])
             self.mm.config(text="  ·  ".join(p for p in [m.arch, m.quant, m.fmt.upper() if m.fmt else "", f"{m.ctx:,} ctx" if m.ctx else ""] if p))
         else:
-            self.mn.config(text="No model loaded", fg=C.TEXT_DIM); self.mm.config(text="")
+            self.mn.config(text="No model loaded", fg=colors["TEXT_DIM"]); self.mm.config(text="")
         # Last gen for THIS model
         if g:
-            self.ftps.config(text=f"{g.tps:.1f}", fg=C.CYAN)
+            self.ftps.config(text=f"{g.tps:.1f}", fg=colors["CYAN"])
             ttft = g.ttft_sec*1000 if g.ttft_sec < 10 else g.ttft_sec
             self.fttft.config(text=f"{ttft:.0f}ms"); self.ftime.config(text=f"{g.total_sec:.1f}s")
             self.ftok.config(text=f"{g.total_tokens:,}"); self.fprom.config(text=f"{g.prompt_tokens:,}")
             self.fgen.config(text=f"{g.predicted_tokens:,}"); self.fstp.config(text=g.stop_reason or "—")
             self.fmod.config(text="")
         else:
-            self.ftps.config(text="—", fg=C.TEXT_DIM)
+            self.ftps.config(text="—", fg=colors["TEXT_DIM"])
             for l in [self.fttft,self.ftime,self.ftok,self.fprom,self.fgen,self.fstp]: l.config(text="—")
             self.fmod.config(text="no history" if m else "")
         # History for THIS model
@@ -756,10 +885,9 @@ class App(tk.Tk):
             self.hi.config(text=f"{len(td)} generations")
             self.hs.config(text=f"avg {sum(td)/len(td):.1f}  peak {max(td):.1f}")
         else: self.hi.config(text="No data for this model"); self.hs.config(text="")
-        self._dspk(self.spk, td, dots=True)
         # Session for THIS model
         self.sg.config(text=str(mg)); self.st.config(text=f"{mt:,}")
-        self.sq.config(text=str(s.queued_requests), fg=C.AMBER if s.queued_requests>0 else C.TEXT)
+        self.sq.config(text=str(s.queued_requests), fg=colors["AMBER"] if s.queued_requests>0 else colors["TEXT"])
 
 
 # ── Entry ─────────────────────────────────────────────────────────────────────
@@ -767,7 +895,16 @@ class App(tk.Tk):
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if args: BASE_URL = args[0].rstrip("/")
-    find_lms(); load_history(); atexit.register(save_history)
+
+    # Handle --theme command line option
+    if "--theme" in sys.argv:
+        theme_idx = sys.argv.index("--theme")
+        if theme_idx + 1 < len(sys.argv):
+            requested_theme = sys.argv[theme_idx + 1]
+            if state.theme_manager.set_theme(requested_theme):
+                dbg(f"Set theme from command line: {requested_theme}")
+
+    find_lms(); load_history(); load_settings(); atexit.register(save_history)
     if DEBUG:
-        print(f"URL: {BASE_URL}\nlms: {_lms_path or 'NOT FOUND'}\nDPI: {DPI_SCALE:.2f}x ({int(DPI_SCALE*96)} dpi)\nHistory: {len(state.model_history)} models, {state.all_gens} total gens")
+        print(f"URL: {BASE_URL}\nlms: {_lms_path or 'NOT FOUND'}\nDPI: {DPI_SCALE:.2f}x ({int(DPI_SCALE*96)} dpi)\nHistory: {len(state.model_history)} models, {state.all_gens} total gens\nTheme: {state.theme_manager.current_theme}")
     app = App(); app.mainloop()
