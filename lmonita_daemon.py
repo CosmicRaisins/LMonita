@@ -11,9 +11,6 @@ Requirements: pip install requests
 Usage:        python lmstudio-monitor.py [url] [--debug]
 """
 
-import ctypes
-import tkinter as tk
-from tkinter import font as tkfont
 import threading
 import subprocess
 import time
@@ -27,50 +24,19 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict
 
 try:
-    import requests
+    import urllib.request
+    from urllib.error import URLError, HTTPError
 except ImportError:
-    print("Missing dependency. Run:  pip install requests")
-    sys.exit(1)
-
-# ── DPI Awareness (must run before any tkinter) ──────────────────────────────
-
-DPI_SCALE = 1.0
-
-if sys.platform == "win32":
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except Exception:
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except Exception:
-            try:
-                ctypes.windll.user32.SetProcessDPIAware()
-            except Exception:
-                pass
-    try:
-        hdc = ctypes.windll.user32.GetDC(0)
-        dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
-        ctypes.windll.user32.ReleaseDC(0, hdc)
-        DPI_SCALE = dpi / 96.0
-    except Exception:
-        pass
-
-
-def S(v):
-    """Scale a pixel value by DPI factor."""
-    return int(v * DPI_SCALE)
+    pass
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
+
 
 BASE_URL = "http://localhost:1234"
 POLL_INTERVAL_S = 2.0
 PS_INTERVAL_S = 1.0
 MAX_HISTORY = 50
-W_W = S(340)
-W_H_FULL = S(560)
-W_H_MINI = S(158)
-CORNER_R = S(16)
 
 DATA_DIR = os.path.expanduser("~/.lmstudio-monitor")
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
@@ -366,12 +332,12 @@ def poll_models():
     for ep in ["/api/v0/models", "/v1/models"]:
         try:
             t0 = time.perf_counter()
-            r = requests.get(f"{BASE_URL}{ep}", timeout=4)
-            state.api_latency_ms = round((time.perf_counter() - t0) * 1000, 1)
-            r.raise_for_status()
-            data = r.json()
+            req = urllib.request.Request(f"{BASE_URL}{ep}")
+            with urllib.request.urlopen(req, timeout=4) as response:
+                state.api_latency_ms = round((time.perf_counter() - t0) * 1000, 1)
+                data = json.loads(response.read().decode('utf-8'))
             break
-        except Exception:
+        except Exception as e:
             data = None
     if data is None:
         state.connected, state.connected_since, state.primary_model = False, None, None
