@@ -1,0 +1,18 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "lmonita@example.com",
+                "Name": "LMonita Contributors"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "A passive desktop widget that monitors LM Studio in real-time.",
+        "Icon": "plasma",
+        "Id": "com.github.lmonita",
+        "Name": "LMonita",
+        "Version": "1.0"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
